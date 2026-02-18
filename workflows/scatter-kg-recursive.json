@@ -1,0 +1,42 @@
+{
+  "label": "Scatter KG Extraction (Recursive)",
+  "description": "Scatters entity IDs to KG extractor for parallel knowledge graph extraction, deduplication, and hierarchical clustering with recursion. Clusters are described at each layer, then clustered again until reaching the top of the hierarchy.",
+  "version": "1.0",
+  "entry": "scatter",
+  "flow": {
+    "scatter": {
+      "klados": { "id": "$SCATTER_KLADOS" },
+      "then": { "scatter": "extract" }
+    },
+    "extract": {
+      "klados": { "id": "$KG_EXTRACTOR_KLADOS" },
+      "then": { "scatter": "dedupe" }
+    },
+    "dedupe": {
+      "klados": { "id": "$KG_DEDUPE_RESOLVER_KLADOS" },
+      "then": { "scatter": "cluster" }
+    },
+    "cluster": {
+      "klados": { "id": "$KG_CLUSTER_KLADOS" },
+      "input": {
+        "initial_delay_max_ms": 30000,
+        "follower_wait_min_ms": 30000,
+        "follower_wait_max_ms": 60000,
+        "follower_poll_interval_ms": 5000
+      },
+      "then": { "scatter": "describe" }
+    },
+    "describe": {
+      "klados": { "id": "$DESCRIBE_KLADOS" },
+      "input": {
+        "update_label": true,
+        "style": "detailed",
+        "custom_instructions": "This entity is a cluster representing a thematic grouping of related entities from a knowledge graph extraction. Your task is to synthesize a cohesive description that captures the shared theme or concept that unites these entities. DO NOT simply list what the cluster contains - instead, identify the underlying theme and describe it as a unified concept. The title should be a clear, human-readable name for this thematic grouping (not 'cluster' or technical terms). The description should explain what this theme represents and why these entities belong together."
+      },
+      "then": {
+        "recurse": "cluster",
+        "max_depth": 10
+      }
+    }
+  }
+}

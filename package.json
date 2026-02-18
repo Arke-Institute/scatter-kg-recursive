@@ -1,0 +1,23 @@
+{
+  "name": "@arke-institute/scatter-kg-recursive-workflow",
+  "version": "1.0.0",
+  "description": "Recursive workflow that scatters entities to KG extractor with hierarchical clustering",
+  "type": "module",
+  "scripts": {
+    "register": "tsx scripts/register.ts scatter-kg-recursive",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@arke-institute/rhiza": "^0.5.1",
+    "@arke-institute/sdk": "^3.6.13"
+  },
+  "devDependencies": {
+    "@arke-institute/klados-testing": "^0.3.3",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.0.0"
+  }
+}
