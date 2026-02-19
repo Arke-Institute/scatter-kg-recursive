@@ -213,9 +213,10 @@ describe('moby-dick real chunks', () => {
     log(`Job collection: ${jobCollectionId}`);
 
     // Wait for workflow to complete
-    log('Waiting for workflow to complete (real text extraction may take a while)...');
+    // Recursive clustering takes longer: each layer needs 30-60s cluster wait + describe calls
+    log('Waiting for workflow to complete (recursive clustering may take a while)...');
     const tree = await waitForWorkflowTree(jobCollectionId, {
-      timeout: 600000, // 10 minutes for real text
+      timeout: 1800000, // 30 minutes for recursive clustering (multiple rounds)
       pollInterval: 10000,
       onPoll: (t, elapsed) => {
         const elapsedSec = Math.round(elapsed / 1000);
@@ -266,5 +267,5 @@ describe('moby-dick real chunks', () => {
     log(`  Clusters formed: ${clusterLogs.length}`);
     log(`  Clusters described: ${describeLogs.length}`);
     log('='.repeat(60));
-  }, 900000); // 15 minute test timeout
+  }, 2100000); // 35 minute test timeout (recursive clustering takes longer)
 });

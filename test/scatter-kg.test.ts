@@ -182,10 +182,11 @@ describe('scatter-kg workflow', () => {
     log(`Job collection: ${jobCollectionId}`);
 
     // Wait for workflow to complete using tree traversal (no indexing lag)
-    log('Waiting for workflow to complete (KG extraction may take a while)...');
+    // Recursive clustering takes longer: each layer needs 30-60s cluster wait + describe calls
+    log('Waiting for workflow to complete (recursive clustering may take a while)...');
     const tree = await waitForWorkflowTree(jobCollectionId, {
-      timeout: 300000, // 5 minutes for KG extraction
-      pollInterval: 5000,
+      timeout: 1800000, // 30 minutes for recursive clustering (multiple rounds)
+      pollInterval: 10000,
       onPoll: (t, elapsed) => {
         const elapsedSec = Math.round(elapsed / 1000);
         log(`[${elapsedSec}s] ${t.logs.size} logs, complete=${t.isComplete}`);
@@ -270,5 +271,5 @@ describe('scatter-kg workflow', () => {
     log(`  - Deduplication completed for ${dedupeLogs.length} entities`);
     log(`  - Clustering completed for ${clusterLogs.length} entities`);
     log(`  - Description generated for ${describeLogs.length} clusters`);
-  }, 900000); // 15 minute test timeout (clustering adds wait time)
+  }, 2100000); // 35 minute test timeout (recursive clustering takes longer)
 });
