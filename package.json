@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "register": "tsx scripts/register.ts scatter-kg-recursive",
+    "analyze": "tsx scripts/analyze-clusters.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "type-check": "tsc --noEmit"
