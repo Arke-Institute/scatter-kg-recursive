@@ -1,0 +1,399 @@
+{
+  "schema_version": "1.0",
+
+  "label": "Scatter KG Extraction (Recursive)",
+  "description": "End-to-end knowledge graph extraction pipeline with deduplication and hierarchical recursive clustering. Processes text entities through extraction, deduplication, and multi-layer clustering until reaching a single top-level cluster.",
+
+  "detailed_description": "## Overview\n\nThis workflow transforms text content into a hierarchical knowledge graph. It processes input entities through parallel extraction, deduplication, and recursive clustering to produce a tree-structured representation of the knowledge contained in the source material.\n\n## How It Works\n\n1. **Scatter Phase**: Input entity IDs are distributed for parallel processing\n2. **Extraction Phase**: Each text entity is processed by the KG Extractor, which identifies named entities (people, places, organizations, concepts) and relationships\n3. **Deduplication Phase**: Extracted entities are checked for duplicates via semantic similarity, with same_as relationships linking equivalent entities\n4. **Clustering Phase**: Entities at each layer are grouped into semantically similar clusters using relationship-based discovery\n5. **Description Phase**: Each cluster receives an AI-generated description synthesizing its members' themes\n6. **Recursion**: Clusters become inputs to another cluster round, building a hierarchy until no more clustering is possible\n\n## Hierarchical Structure\n\nThe workflow builds a tree from the bottom up:\n- **Layer 0**: Original extracted entities (people, places, concepts, etc.)\n- **Layer 1**: First-level clusters grouping related Layer 0 entities\n- **Layer 2**: Higher-level clusters grouping related Layer 1 clusters\n- **Layer N**: Continues until clusters have no peers to group with\n\nEach layer's clusters are described before being clustered into the next level, ensuring rich semantic descriptions propagate up the hierarchy.\n\n## When to Use\n\n- Processing documents or text corpora for knowledge graph construction\n- Building topic hierarchies from unstructured text\n- Creating navigable knowledge structures from large text collections\n- Organizing extracted entities into conceptual taxonomies\n\n## Limitations\n\n- Requires text content in input entities (text or content property, or file attachment)\n- Processing time scales with number of input entities and depth of hierarchy\n- Very large entity sets may produce deep hierarchies requiring significant time\n- Gemini API rate limits apply to extraction and description phases",
+
+  "input": {
+    "entity": {
+      "types": ["text_chunk", "document", "file"],
+      "types_description": "Entities containing text to extract knowledge from. Typically text_chunk entities from a prior chunking step, but any entity with text content works.",
+
+      "properties": {
+        "required": {},
+        "optional": {
+          "text": {
+            "type": "string",
+            "description": "Primary text content to analyze. Preferred property name for KG Extractor.",
+            "maxLength": 500000
+          },
+          "content": {
+            "type": "string",
+            "description": "Alternative text property (legacy support). Use 'text' for new entities.",
+            "maxLength": 500000
+          },
+          "label": {
+            "type": "string",
+            "description": "Name or title of the source, used for context in extraction prompts."
+          },
+          "description": {
+            "type": "string",
+            "description": "Description of the source entity, included in extraction context."
+          }
+        },
+        "notes": "Either 'text' or 'content' property must be present, OR the entity must have a text file attachment. At least 50 characters of text required."
+      },
+
+      "file": {
+        "required": false,
+        "mime_types": ["text/plain", "text/markdown"],
+        "description": "If no text/content property exists, KG Extractor will read from attached file."
+      },
+
+      "relationships": {
+        "required": {},
+        "optional": {
+          "any": {
+            "description": "Relationships on source entities provide context to the extraction process."
+          }
+        }
+      }
+    },
+
+    "invoke_params": {
+      "description": "Parameters passed when invoking the rhiza workflow via the Arke API.",
+      "properties": {
+        "required": {
+          "entity_ids": {
+            "type": "string[]",
+            "description": "Array of entity IDs to process. The scatter step distributes these for parallel extraction."
+          }
+        },
+        "optional": {
+          "target_collection": {
+            "type": "string",
+            "description": "Collection where extracted entities and clusters will be created. If not specified, uses the rhiza workflow's collection."
+          }
+        }
+      }
+    },
+
+    "cardinality": "many",
+    "cardinality_description": "Workflow accepts multiple input entity IDs which are scattered for parallel processing."
+  },
+
+  "output": {
+    "entities": {
+      "creates": {
+        "types": ["person", "organization", "place", "event", "concept", "object", "creature", "group", "entity", "cluster_leader"],
+        "types_description": "Layer 0 consists of extracted entities (person, place, etc.). Higher layers consist of cluster_leader entities representing thematic groupings.",
+
+        "properties": {
+          "guaranteed": {
+            "label": {
+              "type": "string",
+              "description": "For extracted entities: canonical name. For clusters: thematic title generated from member analysis."
+            },
+            "type": {
+              "type": "string",
+              "description": "Entity type indicating the semantic category."
+            }
+          },
+          "conditional": {
+            "description": {
+              "type": "string",
+              "description": "AI-generated description. For entities: based on source text context. For clusters: synthesis of member themes.",
+              "condition": "Always attempted for all entities and clusters."
+            },
+            "cluster_layer": {
+              "type": "integer",
+              "description": "The hierarchy level for cluster entities. Layer 1 clusters contain Layer 0 entities, etc.",
+              "condition": "Present on cluster_leader entities."
+            }
+          }
+        },
+
+        "relationships": {
+          "extracted_from": {
+            "target": "source text entity",
+            "direction": "outgoing",
+            "description": "Links extracted entities back to their source text chunk for provenance."
+          },
+          "semantic_relationships": {
+            "target": "other extracted entities",
+            "direction": "outgoing",
+            "description": "Relationships discovered in the text (works_at, born_in, located_in, etc.)."
+          },
+          "same_as": {
+            "target": "duplicate entities",
+            "direction": "both",
+            "description": "Links semantically equivalent entities identified during deduplication."
+          },
+          "summarized_by": {
+            "target": "cluster_leader entity",
+            "direction": "outgoing",
+            "description": "Links entities to the cluster they belong to. Used by cluster discovery."
+          },
+          "summarizes": {
+            "target": "member entities",
+            "direction": "outgoing",
+            "description": "Links cluster_leader to all entities it summarizes/contains."
+          }
+        }
+      }
+    },
+
+    "workflow_result": {
+      "description": "The workflow produces a hierarchical tree of entities rooted at one or more top-level clusters. The top of the hierarchy contains clusters that have no peers to cluster with, representing the highest-level thematic groupings in the source material.",
+      "structure": {
+        "top_level": "One or more cluster_leader entities with no summarized_by relationship",
+        "intermediate_layers": "cluster_leader entities that both summarize lower entities and are summarized by higher clusters",
+        "leaf_layer": "Original extracted entities (Layer 0) with summarized_by pointing to Layer 1 clusters"
+      }
+    },
+
+    "cardinality": "many",
+    "cardinality_description": "Produces many entities: extracted entities at Layer 0, plus cluster entities at each hierarchical layer."
+  },
+
+  "flow_summary": [
+    {
+      "step": "scatter",
+      "klados": "Scatter Utility",
+      "description": "Entry point. Receives entity IDs via invoke params and scatters them to parallel extraction workers. Each entity ID becomes a separate job for the next step.",
+      "handoff": "scatter to extract"
+    },
+    {
+      "step": "extract",
+      "klados": "KG Extractor",
+      "description": "Processes each text entity using Gemini to extract named entities (people, places, organizations, events, concepts) and their relationships. Creates new entities in the target collection linked back to their source.",
+      "handoff": "scatter to dedupe"
+    },
+    {
+      "step": "dedupe",
+      "klados": "KG Dedupe Resolver",
+      "description": "Checks each extracted entity for semantic duplicates using embedding similarity. Links duplicate entities via same_as relationships rather than merging them, preserving all extracted information.",
+      "handoff": "scatter to cluster"
+    },
+    {
+      "step": "cluster",
+      "klados": "KG Cluster",
+      "description": "Groups semantically similar entities into clusters. Uses relationship-based discovery to find peers at the same hierarchy layer. Creates cluster_leader entities that summarize their members. Implements leader election with timing parameters to handle concurrent clustering.",
+      "input_params": {
+        "initial_delay_max_ms": 30000,
+        "follower_wait_min_ms": 30000,
+        "follower_wait_max_ms": 60000,
+        "follower_poll_interval_ms": 5000
+      },
+      "handoff": "scatter to describe"
+    },
+    {
+      "step": "describe",
+      "klados": "Describe",
+      "description": "Generates AI-powered descriptions for cluster entities. Uses custom instructions to synthesize thematic descriptions that capture what unites the cluster members, rather than just listing contents. Also updates the cluster's label to be human-readable.",
+      "input_params": {
+        "update_label": true,
+        "style": "detailed",
+        "custom_instructions": "Synthesize a cohesive description capturing the shared theme. DO NOT list contents - identify the underlying theme."
+      },
+      "handoff": "recurse to cluster (max_depth: 10)"
+    }
+  ],
+
+  "recursion": {
+    "description": "After description, clusters are sent back to the cluster step to form higher-level clusters. This creates a hierarchical tree structure.",
+    "termination_conditions": [
+      {
+        "condition": "No peers at layer",
+        "description": "When a cluster finds no similar entities at its hierarchy layer, it returns empty outputs and the branch terminates."
+      },
+      {
+        "condition": "Joined existing cluster",
+        "description": "When an entity joins an already-existing cluster rather than creating a new one, it returns empty outputs (the leader handles the handoff)."
+      },
+      {
+        "condition": "Max depth reached",
+        "description": "Safety limit of 10 recursion levels prevents runaway hierarchies."
+      }
+    ],
+    "typical_depth": "2-5 layers depending on input size and semantic diversity"
+  },
+
+  "examples": [
+    {
+      "name": "Document collection extraction",
+      "description": "Process a collection of biography text chunks to build a knowledge hierarchy",
+
+      "input": {
+        "invoke_params": {
+          "entity_ids": ["ENTITY_001", "ENTITY_002", "ENTITY_003"],
+          "target_collection": "COLLECTION_XYZ"
+        },
+        "entities": [
+          {
+            "id": "ENTITY_001",
+            "type": "text_chunk",
+            "properties": {
+              "label": "Einstein Chapter 1",
+              "text": "Albert Einstein was born in Ulm, Germany in 1879. He showed early aptitude for mathematics and physics..."
+            }
+          },
+          {
+            "id": "ENTITY_002",
+            "type": "text_chunk",
+            "properties": {
+              "label": "Curie Chapter 1",
+              "text": "Marie Curie was born in Warsaw, Poland in 1867. She later moved to Paris where she conducted research on radioactivity..."
+            }
+          },
+          {
+            "id": "ENTITY_003",
+            "type": "text_chunk",
+            "properties": {
+              "label": "Newton Chapter 1",
+              "text": "Isaac Newton was born in Woolsthorpe, England in 1643. He developed the laws of motion and universal gravitation..."
+            }
+          }
+        ]
+      },
+
+      "output": {
+        "layer_0_entities": [
+          { "type": "person", "label": "Albert Einstein" },
+          { "type": "place", "label": "Ulm" },
+          { "type": "person", "label": "Marie Curie" },
+          { "type": "place", "label": "Warsaw" },
+          { "type": "place", "label": "Paris" },
+          { "type": "person", "label": "Isaac Newton" },
+          { "type": "place", "label": "Woolsthorpe" },
+          { "type": "concept", "label": "Radioactivity" },
+          { "type": "concept", "label": "Laws of Motion" }
+        ],
+        "layer_1_clusters": [
+          {
+            "type": "cluster_leader",
+            "label": "Pioneering Scientists",
+            "description": "A cluster of influential scientists who made groundbreaking contributions to physics in different eras.",
+            "summarizes": ["Albert Einstein", "Marie Curie", "Isaac Newton"]
+          },
+          {
+            "type": "cluster_leader",
+            "label": "European Cities",
+            "description": "European cities significant as birthplaces or research locations of notable scientists.",
+            "summarizes": ["Ulm", "Warsaw", "Paris", "Woolsthorpe"]
+          },
+          {
+            "type": "cluster_leader",
+            "label": "Physical Sciences",
+            "description": "Fundamental concepts and discoveries in physics.",
+            "summarizes": ["Radioactivity", "Laws of Motion"]
+          }
+        ],
+        "layer_2_clusters": [
+          {
+            "type": "cluster_leader",
+            "label": "History of Physics",
+            "description": "A thematic grouping encompassing the scientists, locations, and discoveries that shaped the development of modern physics.",
+            "summarizes": ["Pioneering Scientists", "European Cities", "Physical Sciences"]
+          }
+        ],
+        "hierarchy_depth": 2
+      }
+    },
+    {
+      "name": "Single document with diverse topics",
+      "description": "Process a single long document covering multiple distinct topics",
+
+      "input": {
+        "invoke_params": {
+          "entity_ids": ["DOC_CHUNK_A", "DOC_CHUNK_B", "DOC_CHUNK_C", "DOC_CHUNK_D"]
+        },
+        "entities_summary": "4 text chunks from a document covering technology companies, their founders, and the cities where they were founded"
+      },
+
+      "output": {
+        "hierarchy_structure": {
+          "layer_0": "~15-25 extracted entities (companies, people, cities, concepts)",
+          "layer_1": "~3-5 thematic clusters (Tech Companies, Founders, Tech Hubs, Business Concepts)",
+          "layer_2": "~1-2 high-level clusters (Technology Industry Overview)",
+          "layer_3": "1 top-level cluster (or terminates at layer 2 if topics are distinct enough)"
+        },
+        "example_cluster_path": [
+          "Steve Jobs (person, layer 0)",
+          "-> Tech Founders (cluster, layer 1)",
+          "-> Technology Industry Leaders (cluster, layer 2)",
+          "-> Modern Technology Ecosystem (cluster, layer 3)"
+        ]
+      }
+    }
+  ],
+
+  "metadata": {
+    "version": "1.0",
+    "author": "Arke Institute",
+
+    "tags": [
+      "knowledge-graph",
+      "extraction",
+      "clustering",
+      "hierarchical",
+      "recursive",
+      "nlp",
+      "gemini",
+      "workflow",
+      "rhiza"
+    ],
+
+    "related_workflows": {
+      "simpler_alternative": {
+        "label": "scatter-kg",
+        "description": "Non-recursive version that produces single-layer clustering. Faster but less organized hierarchy.",
+        "when": "When you need simpler flat clustering without hierarchy, or for smaller entity sets."
+      }
+    },
+
+    "component_kladoi": [
+      {
+        "step": "scatter",
+        "label": "Scatter Utility",
+        "description": "Distributes entity IDs for parallel processing"
+      },
+      {
+        "step": "extract",
+        "label": "KG Extractor",
+        "description": "Extracts entities and relationships from text using Gemini"
+      },
+      {
+        "step": "dedupe",
+        "label": "KG Dedupe Resolver",
+        "description": "Finds and links duplicate entities via semantic similarity"
+      },
+      {
+        "step": "cluster",
+        "label": "KG Cluster",
+        "description": "Groups similar entities into cluster_leader entities"
+      },
+      {
+        "step": "describe",
+        "label": "Describe",
+        "description": "Generates AI descriptions for cluster entities"
+      }
+    ],
+
+    "typical_duration": "2-15 minutes depending on input size and hierarchy depth",
+    "duration_factors": [
+      "Number of input entities",
+      "Text length per entity",
+      "Semantic diversity (affects cluster count)",
+      "Hierarchy depth"
+    ],
+
+    "cost_estimate": {
+      "per_input_entity": "$0.01-0.05",
+      "total_workflow": "$0.10-1.00 for typical document collections",
+      "cost_breakdown": {
+        "extraction": "~60% (1 Gemini call per input entity)",
+        "clustering": "~20% (embedding similarity checks)",
+        "description": "~20% (1 Gemini call per cluster)"
+      }
+    },
+
+    "cloudflare_resources": {
+      "workers": "All kladoi run as Cloudflare Workers",
+      "durable_objects": "KG Extractor and KG Cluster use Tier 2 DO pattern for long operations",
+      "concurrency": "Safe for parallel execution; cluster step uses leader election for coordination"
+    }
+  }
+}
