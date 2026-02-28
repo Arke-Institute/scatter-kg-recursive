@@ -18,6 +18,8 @@ import {
   readState,
   writeState,
   getStateFilePath,
+  findWorkspaceConfig,
+  resolveWorkspaceCollection,
   type RhizaConfig,
   type RhizaRegistrationState,
   type DryRunResult,
@@ -99,6 +101,7 @@ async function main() {
   const isProduction =
     process.argv.includes('--production') || process.argv.includes('--prod');
   const isDryRun = process.argv.includes('--dry-run');
+  const migrateCollection = process.argv.includes('--migrate-collection');
   const network = isProduction ? 'main' : 'test';
 
   // Resolve workflow file
@@ -109,7 +112,7 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`\nScatter KG Registration (${network} network)${isDryRun ? ' [DRY RUN]' : ''}\n`);
+  console.log(`\nScatter KG Registration (${network} network)${isDryRun ? ' [DRY RUN]' : ''}${migrateCollection ? ' [MIGRATE]' : ''}\n`);
   console.log(`Workflow: ${workflowName}`);
 
   // Load and parse workflow definition
@@ -149,11 +152,78 @@ async function main() {
   // Create client
   const client = new ArkeClient({ authToken: ARKE_USER_KEY, network });
 
+  // Check for workspace config (shared collection across rhizai)
+  const workspace = findWorkspaceConfig();
+  let collectionId: string | undefined;
+  let updatedState = state;
+
+  if (workspace) {
+    console.log(`Found workspace config: ${workspace.path}`);
+    if (!isDryRun) {
+      const resolved = await resolveWorkspaceCollection(client, network, workspace.path);
+      collectionId = resolved.collectionId;
+      if (!resolved.created) {
+        console.log(`Using workspace collection: ${collectionId}`);
+      }
+
+      // Handle --migrate-collection: move existing rhiza to workspace collection
+      if (migrateCollection && state && state.collection_id !== collectionId) {
+        console.log(`\nMigrating rhiza from ${state.collection_id} to ${collectionId}...`);
+
+        // Get current tip for CAS
+        const { data: tipData, error: tipError } = await client.api.GET('/entities/{id}/tip', {
+          params: { path: { id: state.rhiza_id } },
+        });
+
+        if (tipError || !tipData) {
+          throw new Error(`Failed to get entity tip: ${tipError?.error || 'Unknown error'}`);
+        }
+
+        // Update rhiza with new collection using relationship changes
+        const { error: updateError } = await client.api.PUT('/entities/{id}', {
+          params: { path: { id: state.rhiza_id } },
+          body: {
+            expect_tip: tipData.cid,
+            relationships_remove: [{ peer: state.collection_id, predicate: 'collection' }],
+            relationships_add: [{ peer: collectionId, peer_type: 'collection', predicate: 'collection' }],
+          } as any,
+        });
+
+        if (updateError) {
+          throw new Error(`Failed to migrate rhiza: ${updateError.error || 'Unknown error'}`);
+        }
+
+        console.log(`  Migrated rhiza ${state.rhiza_id} to collection ${collectionId}`);
+        updatedState = { ...state, collection_id: collectionId, updated_at: new Date().toISOString() };
+        writeState(stateFile, updatedState);
+        console.log(`  Updated local state`);
+      } else if (migrateCollection && state && state.collection_id === collectionId) {
+        console.log(`Rhiza already in workspace collection`);
+      }
+    } else {
+      const networkConfig = workspace.config[network];
+      if (networkConfig.collection_id) {
+        collectionId = networkConfig.collection_id;
+        console.log(`Would use workspace collection: ${collectionId}`);
+        if (migrateCollection && state && state.collection_id !== collectionId) {
+          console.log(`Would migrate rhiza from ${state.collection_id} to ${collectionId}`);
+        }
+      } else {
+        console.log(`Would create workspace collection: ${networkConfig.collection_label}`);
+      }
+    }
+    console.log('');
+  } else if (migrateCollection) {
+    console.warn('Warning: --migrate-collection requires a workspace config (.arke-workspace.json)');
+    console.log('');
+  }
+
   try {
     // Sync rhiza
-    const result = await syncRhiza(client, config, state, {
+    const result = await syncRhiza(client, config, updatedState, {
       network,
       dryRun: isDryRun,
+      collectionId,
       collectionLabel: `Rhiza: ${config.label}`,
     });
 
